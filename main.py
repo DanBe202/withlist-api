@@ -52,7 +52,7 @@ app.add_middleware(
 )
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_client = redis.from_url(REDIS_URL, decode_responses=True, ssl_cert_reqs="none")
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 # ssl_cert_reqs="none" - Disable SSL certificate verification for Upstash
 
 
@@ -107,6 +107,7 @@ async def create_new_wishlist(
 ):
     new_wishlist = create_wishlist(db=db, wishlist=wishlist, user_id=current_user.id)
 
+    redis_client.delete(f"user_{current_user.id}_wishlists")
     redis_client.delete("all_wishlists")
 
     return new_wishlist
@@ -120,7 +121,7 @@ async def get_all_wishlists(db: Session = Depends(get_db)):
 
     wishlists = get_wishlists(db)
 
-    redis_client.setex("all_wishlists", 300, json.dumps(
+    redis_client.setex("all_wishlists", 3600, json.dumps(
         [wishlist.to_dict() for wishlist in wishlists]
     ))
 
@@ -128,19 +129,15 @@ async def get_all_wishlists(db: Session = Depends(get_db)):
 
 
 @app.get("/my-wishlists", response_model=List[WishListResponse])
-async def get_my_wishlists(
-        db: Session = Depends(get_db),
-        current_user: User = Depends(get_current_user)
-):
+async def get_my_wishlists(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     cached = redis_client.get(f"user_{current_user.id}_wishlists")
     if cached:
         return json.loads(cached)
     wishlists = db.query(WishList).filter(WishList.user_id == current_user.id).all()
-    redis_client.setex(f"user_{current_user.id}_wishlists", 300,
-                       json.dumps([wishlist.to_dict() for wishlist in wishlists]))
-
+    redis_client.setex(f"user_{current_user.id}_wishlists", 3600, json.dumps(
+        [wishlist.to_dict() for wishlist in wishlists]
+        ))
     return wishlists
-
 
 @app.get("/wishlists/{wishlist_id}", response_model=WishListResponse)
 async def get_wishlist(wishlist_id: int, db: Session = Depends(get_db)):
